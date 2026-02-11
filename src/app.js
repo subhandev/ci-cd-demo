@@ -15,6 +15,9 @@ app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-app.listen(PORT, () => {
-  console.log(`App running on port ${PORT} in ${ENV} mode`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`App running on port ${PORT} in ${ENV} mode`);
+  });
+}
+module.exports = app;
