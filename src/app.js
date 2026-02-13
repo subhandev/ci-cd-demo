@@ -10,17 +10,21 @@ const ENV = process.env.NODE_ENV;
 
 // Root route (used by prod TG)
 app.get("/", (req, res) => {
+  console.log("NODE_ENV:", process.env.NODE_ENV);
+  console.log("DB_PASSWORD:", process.env.DB_PASSWORD);
   res.json({
     message: "Hello from CI/CD demo",
-    environment: ENV
+    environment: ENV,
   });
 });
 
 // Dev route (used by /dev path rule in ALB)
 app.get("/dev", (req, res) => {
+  console.log("NODE_ENV:", process.env.NODE_ENV);
+  console.log("DB_PASSWORD:", process.env.DB_PASSWORD);
   res.json({
     message: "Hello from DEV",
-    environment: ENV
+    environment: ENV,
   });
 });
 
