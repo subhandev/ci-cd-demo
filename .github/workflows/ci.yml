@@ -39,7 +39,7 @@ jobs:
       - name: Set environment variables
         id: set-env
         run: |
-          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "service=my-app-service" >> $GITHUB_OUTPUT
             echo "env_name=production" >> $GITHUB_OUTPUT
           else
@@ -90,3 +90,4 @@ jobs:
           service: ${{ steps.set-env.outputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+          
