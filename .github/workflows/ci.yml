@@ -20,8 +20,6 @@ jobs:
   # =========================
   build:
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.export-image.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,21 +41,13 @@ jobs:
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
-        id: build
+      - name: Build & Push Docker Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker build -t $IMAGE_URI .
-          docker push $IMAGE_URI
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
-
-      - name: Export image output
-        id: export-image
-        run: |
-          echo "image=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
 
   # =========================
@@ -69,10 +59,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Debug image output
-        run: |
-          echo "Image from build job:"
-          echo "${{ needs.build.outputs.image }}"
+      - uses: actions/checkout@v4
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -80,13 +67,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Render task definition
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render task definition (DEV)
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build.outputs.image }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           environment-variables: |
             NODE_ENV=development
 
@@ -106,13 +96,10 @@ jobs:
     needs: build
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
-    environment: production   # 👈 manual approval here
+    environment: production   # 👈 Requires manual approval in GitHub
 
     steps:
-      - name: Debug image output
-        run: |
-          echo "Image from build job:"
-          echo "${{ needs.build.outputs.image }}"
+      - uses: actions/checkout@v4
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -120,13 +107,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Render task definition
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render task definition (PROD)
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build.outputs.image }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           environment-variables: |
             NODE_ENV=production
 
