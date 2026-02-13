@@ -16,53 +16,42 @@ env:
 jobs:
 
   # =========================
-  # 🏗 BUILD JOB
+  # BUILD JOB
   # =========================
   build:
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.build-image.outputs.image }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      - name: Install
-        run: npm ci
+      - run: npm ci
+      - run: npm test
 
-      - name: Test
-        run: npm test
-
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to ECR
-        id: login-ecr
+      - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
-        id: build-image
+      - name: Build & Push Docker Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
 
   # =========================
-  # 🚀 DEPLOY DEV
+  # DEPLOY DEV
   # =========================
   deploy-dev:
     needs: build
@@ -70,20 +59,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Render task definition
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render task definition (DEV)
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build.outputs.image }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           environment-variables: |
             NODE_ENV=development
 
@@ -97,29 +90,33 @@ jobs:
 
 
   # =========================
-  # 🛑 DEPLOY PROD (MANUAL APPROVAL)
+  # DEPLOY PROD (Manual Approval)
   # =========================
   deploy-prod:
     needs: build
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
-    environment: production   # 👈 requires approval in GitHub
+    environment: production   # 👈 Requires manual approval in GitHub
 
     steps:
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Render task definition
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render task definition (PROD)
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build.outputs.image }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           environment-variables: |
             NODE_ENV=production
 
