@@ -15,6 +15,9 @@ env:
 
 jobs:
 
+  # =========================
+  # BUILD JOB
+  # =========================
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -40,24 +43,33 @@ jobs:
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push
+      - name: Build & Push Image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "Built image: $IMAGE_URI"
 
 
-
+  # =========================
+  # DEPLOY DEV
+  # =========================
   deploy-dev:
     needs: build
     if: github.ref_name == 'develop'
     runs-on: ubuntu-latest
 
     steps:
+      - name: Debug image output
+        run: |
+          echo "Image from build job:"
+          echo "${{ needs.build.outputs.image }}"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -83,14 +95,21 @@ jobs:
           wait-for-service-stability: true
 
 
-
+  # =========================
+  # DEPLOY PROD (Manual Approval)
+  # =========================
   deploy-prod:
     needs: build
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
-    environment: production
+    environment: production   # 👈 manual approval here
 
     steps:
+      - name: Debug image output
+        run: |
+          echo "Image from build job:"
+          echo "${{ needs.build.outputs.image }}"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
