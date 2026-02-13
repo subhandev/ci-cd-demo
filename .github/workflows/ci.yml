@@ -11,57 +11,36 @@ env:
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
   CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
-  build-and-deploy:
+
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
 
     steps:
-      # 1️⃣ Checkout
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      # 3️⃣ Install & Test
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
+      - run: npm test
 
-      - name: Run tests
-        run: npm test
-
-      # 4️⃣ Decide Environment Based on Branch
-      - name: Set environment variables
-        id: set-env
-        run: |
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            echo "service=my-app-service" >> $GITHUB_OUTPUT
-            echo "env_name=production" >> $GITHUB_OUTPUT
-          else
-            echo "service=my-app-dev-service" >> $GITHUB_OUTPUT
-            echo "env_name=development" >> $GITHUB_OUTPUT
-          fi
-
-      # 5️⃣ Configure AWS
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 6️⃣ Login to ECR
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 7️⃣ Build and Push Docker Image
-      - name: Build, tag, and push image
+      - name: Build & Push
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -71,25 +50,65 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # 8️⃣ Render ECS Task Definition (Inject NODE_ENV)
+
+  deploy-dev:
+    needs: build
+    if: github.ref_name == 'develop'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set environment variables
+        id: set-env
+        run: |
+          echo "env_name=development" >> $GITHUB_OUTPUT
+          echo "service=my-app-dev-service" >> $GITHUB_OUTPUT
+
       - name: Render task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: ${{ secrets.ECS_TASK_DEFINITION }}
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
+          image: ${{ needs.build.outputs.image }}
           environment-variables: |
             NODE_ENV=${{ steps.set-env.outputs.env_name }}
 
-      # 9️⃣ Deploy to ECS
-      - name: Deploy to ECS
+      - name: Deploy to Dev
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ steps.set-env.outputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
-          
-    
-          
+
+
+  deploy-prod:
+    needs: build
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    environment: production   # 👈 manual approval happens here
+
+    steps:
+      - name: Set environment variables
+        id: set-env
+        run: |
+          echo "env_name=production" >> $GITHUB_OUTPUT
+          echo "service=my-app-service" >> $GITHUB_OUTPUT
+
+      - name: Render task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image }}
+          environment-variables: |
+            NODE_ENV=${{ steps.set-env.outputs.env_name }}
+
+      - name: Deploy to Production
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ steps.set-env.outputs.service }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
