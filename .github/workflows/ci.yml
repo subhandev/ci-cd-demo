@@ -4,13 +4,12 @@ on:
   push:
     branches:
       - main
+      - dev
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
-  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
   CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
 
 jobs:
@@ -36,7 +35,19 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # 4️⃣ Configure AWS
+      # 4️⃣ Decide Environment Based on Branch
+      - name: Set environment variables
+        id: set-env
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "main" ]]; then
+            echo "service=my-app-service" >> $GITHUB_OUTPUT
+            echo "env_name=production" >> $GITHUB_OUTPUT
+          else
+            echo "service=my-app-dev-service" >> $GITHUB_OUTPUT
+            echo "env_name=development" >> $GITHUB_OUTPUT
+          fi
+
+      # 5️⃣ Configure AWS
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -44,12 +55,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 5️⃣ Login to ECR
+      # 6️⃣ Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 6️⃣ Build and Push Docker Image
+      # 7️⃣ Build and Push Docker Image
       - name: Build, tag, and push image
         id: build-image
         env:
@@ -60,20 +71,22 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # 7️⃣ Render ECS Task Definition
+      # 8️⃣ Render ECS Task Definition (Inject NODE_ENV)
       - name: Render task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          task-definition: ${{ secrets.ECS_TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
+          environment-variables: |
+            NODE_ENV=${{ steps.set-env.outputs.env_name }}
 
-      # 8️⃣ Deploy to ECS
+      # 9️⃣ Deploy to ECS
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
+          service: ${{ steps.set-env.outputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
